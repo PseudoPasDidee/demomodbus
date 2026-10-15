@@ -6,6 +6,9 @@ Carte mémoire (CO : Coils, DI : Discrete Inputs, HR : Holding Registers, IR : I
     HR 0-99   : registre de maintien (valeur initiale 13)
     IR 0-99   : registre d'entrée
 """
+from pymodbus import pymodbus_apply_logging_config
+
+pymodbus_apply_logging_config("INFO")  # DEBUG pour le détail des requêtes
 
 from pymodbus.server import StartTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
@@ -20,4 +23,4 @@ store = SimDevice(
     ),
 )
 
-StartTcpServer(context=store, address=("0.0.0.0", 502))
+StartTcpServer(context=store, address=("0.0.0.0", 5020))

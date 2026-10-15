@@ -15,7 +15,7 @@ from pymodbus.server import ModbusTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
 
 DEVICE_ID = 1
-ADDRESS = ("0.0.0.0", 502)
+ADDRESS = ("0.0.0.0", 5020)
 
 READ_COILS = 1
 READ_HOLDING_REGISTERS = 3
@@ -73,7 +73,7 @@ async def main() -> None:
     server = ModbusTcpServer(build_device(), address=ADDRESS)
     await server.serve_forever(background=True)
 
-    print("Serveur Modbus TCP démarré sur le port 502...")
+    print("Serveur Modbus TCP démarré sur le port 5020...")
     await temperature_simulation(server)
 
 
