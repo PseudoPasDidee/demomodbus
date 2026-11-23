@@ -1,10 +1,26 @@
 """Serveur Modbus TCP avec simulation de température.
 
-Carte mémoire (CO : Coils, DI : Discrete Inputs, HR : Holding Registers, IR : Input Registers) :
-    CO 0        : chauffage (écrit par new_client_on.py / new_client_off.py)
-    DI 0 / 1    : température > 25 °C / température < 15 °C
-    HR 0        : registre de maintien inutilisé
-    IR 0        : température en °C x 10, REGISTERS (1 registre)
+================================================================================
+CARTE MÉMOIRE MODBUS — AUTOMATE SIMULÉ (new_server.py)
+================================================================================
+Serveur   : Modbus TCP, 0.0.0.0:5020
+Device ID : 1
+
+| Zone | Adr | Type            | Accès      | Description                                      | Initial |
+|------|-----|-----------------|------------|--------------------------------------------------|---------|
+| CO   | 0   | Bit (booléen)   | Lecture/Écriture | Commande chauffage (new_client_on/off.py)   | False   |
+| DI   | 0   | Bit (booléen)   | Lecture    | Température > 22,0 °C (seuil haut)               | False   |
+| DI   | 1   | Bit (booléen)   | Lecture    | Température < 15,0 °C (seuil bas)                | False   |
+| HR   | 0   | Registre (16b)  | Lecture/Écriture | Registre de maintien (non utilisé)          | 0       |
+| IR   | 0   | Registre (16b)  | Lecture    | Température × 10 (ex. 205 = 20,5 °C)             | 200     |
+
+Légende : CO = Coils, DI = Discrete Inputs, HR = Holding Registers,
+          IR = Input Registers.
+
+La température varie entre 10,0 °C et 30,0 °C :
+  - chauffage ON  -> +0,1 à +0,5 °C par cycle (1 s)
+  - chauffage OFF -> -0,1 à -0,3 °C par cycle (1 s)
+================================================================================
 """
 
 import asyncio
