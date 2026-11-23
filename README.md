@@ -47,7 +47,7 @@ Dans la suite du document, les cartes mémoire sont écrites avec ces sigles : `
 Remarques :
 
 - Python n'a pas besoin d'être installé séparément : `uv` télécharge la version déclarée dans `pyproject.toml` (CPython 3.13).
-- Les exemples utilisent le port **502**, qui est réservé aux administrateurs sous Linux et macOS. Sur Windows, aucun privilège particulier n'est requis. Pour éviter cette contrainte, il est possible de remplacer `502` par `5020` dans les fichiers `.py` : le port est défini à un seul endroit par serveur (`ADDRESS`).
+- Les exemples utilisent le port **5020**. Le port 502, réservé aux administrateurs sous Linux et macOS, a volontairement été remplacé par 5020 dans tous les scripts pour éviter cette contrainte. Le port est défini à un seul endroit par serveur (`ADDRESS`).
 
 ## Installation du projet
 
@@ -122,6 +122,10 @@ Objectif : démarrer un serveur Modbus TCP qui expose quatre blocs de 100 donné
 Code de `server.py` :
 
 ```python
+from pymodbus import pymodbus_apply_logging_config
+
+pymodbus_apply_logging_config("INFO")  # DEBUG pour le détail des requêtes
+
 from pymodbus.server import StartTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
 
@@ -135,7 +139,7 @@ store = SimDevice(
     ),
 )
 
-StartTcpServer(context=store, address=("0.0.0.0", 502))
+StartTcpServer(context=store, address=("0.0.0.0", 5020))
 ```
 
 Commande :
@@ -144,15 +148,7 @@ Commande :
 uv run server.py
 ```
 
-Résultat attendu : le processus reste actif et n'affiche rien. C'est le comportement normal : `pymodbus` n'active aucun journal par défaut. Le serveur est prêt lorsqu'un client répond (étape 2). Pour afficher les journaux de `pymodbus`, ajouter ces deux lignes en tête de `server.py` :
-
-```python
-from pymodbus import pymodbus_apply_logging_config
-
-pymodbus_apply_logging_config("INFO")  # DEBUG pour le détail des requêtes
-```
-
-Le démarrage est alors signalé sur la sortie d'erreur :
+Résultat attendu : le serveur reste actif et affiche un message de démarrage sur la sortie d'erreur. Le serveur est prêt lorsqu'un client répond (étape 2).
 
 ```text
 2026-01-01 10:00:00,000 INFO  base:92 Server listening.
@@ -167,7 +163,7 @@ Depuis pymodbus 3.15, les anciens blocs de données (`ModbusDeviceContext`, `Mod
 
 Le paramètre `simdata` reçoit les quatre blocs **dans un ordre imposé** : CO (Coils), DI (Discrete Inputs), HR (Holding Registers), IR (Input Registers). `DataType.BITS` décrit un bit (une adresse correspond à un seul booléen), `DataType.REGISTERS` décrit un registre de 16 bits.
 
-L'adresse `0.0.0.0` fait écouter le serveur sur toutes les interfaces réseau ; les clients se connectent à l'adresse locale `127.0.0.1`.
+L'adresse `0.0.0.0` fait écouter le serveur sur toutes les interfaces réseau, ici sur le port 5020 ; les clients se connectent à l'adresse locale `127.0.0.1`, sur le même port.
 
 Seules les données déclarées sont accessibles : toute adresse non déclarée reçoit une exception `ILLEGAL_ADDRESS` du serveur.
 
@@ -180,7 +176,7 @@ Code de `client.py` :
 ```python
 from pymodbus.client import ModbusTcpClient
 
-client = ModbusTcpClient('127.0.0.1', port=502)
+client = ModbusTcpClient('127.0.0.1', port=5020)
 client.connect()
 
 result = client.read_holding_registers(address=0)
@@ -219,24 +215,51 @@ Carte mémoire de `new_server.py` :
 
 | Adresse | Bloc | Valeur |
 |---------|------|--------|
-| CO 0 | Coils | Chauffage : `0` (arrêté), `1` (allumé) |
-| DI 0 | Discrete Inputs | `1` si la température dépasse 25 °C |
+| CO 0 | Coils | Chauffage : `0` (arrêté), `1` (allumé), commandé par `new_client_on.py` / `new_client_off.py` |
+| DI 0 | Discrete Inputs | `1` si la température dépasse 22 °C |
 | DI 1 | Discrete Inputs | `1` si la température est inférieure à 15 °C |
 | HR 0 | Holding Registers | Non utilisé |
-| IR 0 et IR 1 | Input Registers | Température en °C, type FLOAT32 |
+| IR 0 | Input Registers | Température × 10 (ex. `205` = 20,5 °C), sur 1 registre de 16 bits |
 
 Code de `new_server.py` :
 
 ```python
+"""Serveur Modbus TCP avec simulation de température.
+
+================================================================================
+CARTE MÉMOIRE MODBUS — AUTOMATE SIMULÉ (new_server.py)
+================================================================================
+Serveur   : Modbus TCP, 0.0.0.0:5020
+Device ID : 1
+
+| Zone | Adr | Type            | Accès      | Description                                      | Initial |
+|------|-----|-----------------|------------|--------------------------------------------------|---------|
+| CO   | 0   | Bit (booléen)   | Lecture/Écriture | Commande chauffage (new_client_on/off.py)   | False   |
+| DI   | 0   | Bit (booléen)   | Lecture    | Température > 22,0 °C (seuil haut)               | False   |
+| DI   | 1   | Bit (booléen)   | Lecture    | Température < 15,0 °C (seuil bas)                | False   |
+| HR   | 0   | Registre (16b)  | Lecture/Écriture | Registre de maintien (non utilisé)          | 0       |
+| IR   | 0   | Registre (16b)  | Lecture    | Température × 10 (ex. 205 = 20,5 °C)             | 200     |
+
+Légende : CO = Coils, DI = Discrete Inputs, HR = Holding Registers,
+          IR = Input Registers.
+
+La température varie entre 10,0 °C et 30,0 °C :
+  - chauffage ON  -> +0,1 à +0,5 °C par cycle (1 s)
+  - chauffage OFF -> -0,1 à -0,3 °C par cycle (1 s)
+================================================================================
+"""
+
 import asyncio
 import random
 
-from pymodbus.client import ModbusTcpClient
 from pymodbus.server import ModbusTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
 
+from pymodbus import pymodbus_apply_logging_config
+pymodbus_apply_logging_config("DEBUG")
+
 DEVICE_ID = 1
-ADDRESS = ("0.0.0.0", 502)
+ADDRESS = ("0.0.0.0", 5020)
 
 READ_COILS = 1
 READ_DISCRETE_INPUTS = 2
@@ -250,15 +273,8 @@ IR_TEMPERATURE = 0
 TEMP_START = 20.0
 TEMP_MIN = 10.0
 TEMP_MAX = 30.0
-TEMP_HIGH = 25.0
+TEMP_HIGH = 22.0
 TEMP_LOW = 15.0
-
-
-def to_registers(temperature: float) -> list[int]:
-    """Convertit une température en 2 registres FLOAT32."""
-    return ModbusTcpClient.convert_to_registers(
-        temperature, ModbusTcpClient.DATATYPE.FLOAT32
-    )
 
 
 def build_device() -> SimDevice:
@@ -272,7 +288,7 @@ def build_device() -> SimDevice:
                 SimData(DI_LOW_TEMP, values=False, datatype=DataType.BITS),
             ],
             [SimData(0, values=0, datatype=DataType.REGISTERS)],
-            [SimData(IR_TEMPERATURE, values=TEMP_START, datatype=DataType.FLOAT32)],
+            [SimData(IR_TEMPERATURE, values=int(TEMP_START * 10), datatype=DataType.REGISTERS)],
         ),
     )
 
@@ -292,7 +308,7 @@ async def temperature_simulation(server: ModbusTcpServer) -> None:
         temperature = min(max(temperature, TEMP_MIN), TEMP_MAX)
 
         await server.async_setValues(
-            DEVICE_ID, READ_INPUT_REGISTERS, IR_TEMPERATURE, to_registers(temperature)
+            DEVICE_ID, READ_INPUT_REGISTERS, IR_TEMPERATURE, [int(temperature * 10)]
         )
         await server.async_setValues(
             DEVICE_ID, READ_DISCRETE_INPUTS, DI_HIGH_TEMP, [temperature > TEMP_HIGH]
@@ -309,7 +325,7 @@ async def main() -> None:
     server = ModbusTcpServer(build_device(), address=ADDRESS)
     await server.serve_forever(background=True)
 
-    print("Serveur Modbus TCP démarré sur le port 502...")
+    print("Serveur Modbus TCP démarré sur le port 5020...")
     await temperature_simulation(server)
 
 
@@ -333,7 +349,7 @@ uv run new_client_off.py
 Résultat attendu dans le terminal du serveur : une ligne par seconde. Les premières lignes indiquent `OFF` ; après l'exécution de `new_client_on.py`, la ligne suivante indique `ON` et la température augmente à chaque seconde. Le serveur s'arrête avec `Ctrl+C`.
 
 ```text
-Serveur Modbus TCP démarré sur le port 502...
+Serveur Modbus TCP démarré sur le port 5020...
 T = 20.3 °C | Chauffage = OFF
 T = 20.1 °C | Chauffage = OFF
 T = 20.4 °C | Chauffage = ON
@@ -344,8 +360,9 @@ Vérifications à réaliser :
 
 - la température augmente lorsque `new_client_on.py` a été exécuté, elle diminue après `new_client_off.py` ;
 - la température reste comprise entre 10 °C et 30 °C, bornes appliquées par `TEMP_MIN` et `TEMP_MAX` ;
-- au-delà de 25 °C, DI 0 passe à 1 ; en dessous de 15 °C, DI 1 passe à 1 ;
-- CO 0 reflète la dernière commande reçue : `True` après `new_client_on.py`, `False` après `new_client_off.py`.
+- au-delà de 22 °C, DI 0 passe à 1 ; en dessous de 15 °C, DI 1 passe à 1 ;
+- CO 0 reflète la dernière commande reçue : `True` après `new_client_on.py`, `False` après `new_client_off.py` ;
+- IR 0 contient la température multipliée par 10 (ex. `205` pour 20,5 °C).
 
 ### Points techniques
 
@@ -365,20 +382,18 @@ Le deuxième argument est le code fonction Modbus employé par le client. Il dé
 
 **Tâche de simulation.** Le serveur est asynchrone : `serve_forever(background=True)` le démarre sans bloquer la boucle d'événements, et la boucle `while True` de la simulation s'exécute dans la même boucle avec `asyncio.sleep(1)`. Le serveur reste donc joignable pendant que la simulation s'exécute.
 
-**Type FLOAT32.** La température occupe deux registres de 16 bits. Le serveur encode la valeur avec `convert_to_registers()`, le client la décode avec `convert_from_registers()` ; il faut donc lire deux registres (`count=2`).
+**Type REGISTERS et température × 10.** La température est stockée dans un seul registre de 16 bits sous forme d'un entier égal à la température multipliée par 10 (`int(temperature * 10)`). Côté serveur, la valeur est écrite directement avec `async_setValues(..., [int(temperature * 10)])` ; côté client, on lit un seul registre (`count=1`) et on divise la valeur par 10 pour retrouver les degrés Celsius.
 
 ## Étape 4 : lire la température depuis un client
 
-Objectif : décoder une valeur flottante stockée sur deux registres.
+Objectif : lire la température stockée dans un registre unique.
 
 ```python
 from pymodbus.client import ModbusTcpClient
 
-with ModbusTcpClient("127.0.0.1", port=502) as client:
-    response = client.read_input_registers(0, count=2)
-    temperature = ModbusTcpClient.convert_from_registers(
-        response.registers, ModbusTcpClient.DATATYPE.FLOAT32
-    )
+with ModbusTcpClient("127.0.0.1", port=5020) as client:
+    response = client.read_input_registers(0, count=1)
+    temperature = response.registers[0] / 10
     print(f"{temperature:.1f} °C")
 ```
 
@@ -387,7 +402,7 @@ Résultat attendu : une température comprise entre 10 et 30 °C, proche de la v
 La lecture de l'état des capteurs se fait de la même manière :
 
 ```python
-with ModbusTcpClient("127.0.0.1", port=502) as client:
+with ModbusTcpClient("127.0.0.1", port=5020) as client:
     print("Chauffage :", client.read_coils(0, count=1).bits[0])
     print("Seuils    :", client.read_discrete_inputs(0, count=2).bits[:2])
 ```
@@ -396,13 +411,15 @@ with ModbusTcpClient("127.0.0.1", port=502) as client:
 
 Chaque exercice est indépendant et vérifiable avec les commandes des étapes précédentes.
 
-1. Changer de port. Remplacer `502` par `5020` dans `server.py`, `client.py`, `new_server.py`, `new_client_on.py`, `new_client_off.py` et `temp_server.py`. Vérification : `uv run server.py` puis `uv run client.py` affiche toujours `[13]` et le serveur démarre sans privilèges administrateur.
-2. Modifier un seuil. Dans `new_server.py`, passer `TEMP_HIGH` de 25 à 22. Vérification : DI 0 passe à 1 alors que la température affichée est comprise entre 22 et 30 °C.
-3. Changer de type de donnée. Remplacer `DataType.FLOAT32` par `DataType.REGISTERS` dans `new_server.py`, et publier la température multipliée par 10 (par exemple `int(temperature * 10)`) à la place de `to_registers(temperature)`. Vérification : la lecture se fait avec `read_input_registers(0, count=1)` et la valeur obtenue est comprise entre 100 et 300.
-4. Observer les échanges. Ajouter `pymodbus_apply_logging_config("DEBUG")` en tête de `new_server.py`. Vérification : le terminal du serveur affiche la trame reçue (`recv:`), la requête décodée, puis la trame renvoyée (`send:`) :
+Ces modifications ont déjà été appliquées dans les fichiers fournis :
+
+1. Port 5020. Le port `502` a été remplacé par `5020` dans `server.py`, `client.py`, `new_server.py`, `new_client_on.py`, `new_client_off.py` et `temp_server.py`. Vérification : `uv run server.py` puis `uv run client.py` affiche toujours `[13]` et le serveur démarre sans privilèges administrateur.
+2. Seuil de température. `TEMP_HIGH` vaut désormais 22 (au lieu de 25) dans `new_server.py`. Vérification : DI 0 passe à 1 alors que la température affichée est comprise entre 22 et 30 °C.
+3. Type de donnée `REGISTERS`. La température est publiée dans IR 0 sous forme d'un entier × 10 (`int(temperature * 10)`) sur un seul registre, au lieu d'un FLOAT32 sur deux registres. Vérification : la lecture se fait avec `read_input_registers(0, count=1)` et la valeur obtenue est comprise entre 100 et 300.
+4. Observer les échanges. `pymodbus_apply_logging_config("DEBUG")` est déjà présent en tête de `new_server.py`. Vérification : le terminal du serveur affiche la trame reçue (`recv:`), la requête décodée, puis la trame renvoyée (`send:`) :
 
 ```text
-DEBUG transport:307 recv: 0x0 0x1 0x0 0x0 0x0 0x6 0x1 0x4 0x0 0x0 0x0 0x2 extra data:
+DEBUG transport:307 recv: 0x0 0x1 0x0 0x0 0x0 0x6 0x1 0x4 0x0 0x0 0x0 0x1 extra data:
 DEBUG decoders:86 decoded PDU function_code(4 sub -1) -> ReadInputRegistersRequest(...)
 DEBUG transport:356 send: 0x0 0x1 0x0 0x0 0x0 0x5 0x1 0x4 0x2 0x0 0xc3
 ```
@@ -429,7 +446,7 @@ uv run temp_server.py
 Sortie attendue, une ligne par seconde :
 
 ```text
-Serveur Modbus TCP démarré sur le port 502...
+Serveur Modbus TCP démarré sur le port 5020...
 T = 20.3 °C | Chauffage = ON
 T = 20.6 °C | Chauffage = ON
 ```
@@ -437,7 +454,7 @@ T = 20.6 °C | Chauffage = ON
 Lecture de HR 0 et HR 1 :
 
 ```python
-with ModbusTcpClient("127.0.0.1", port=502) as client:
+with ModbusTcpClient("127.0.0.1", port=5020) as client:
     response = client.read_holding_registers(0, count=2)
     temperature = ModbusTcpClient.convert_from_registers(
         response.registers, ModbusTcpClient.DATATYPE.FLOAT32
@@ -470,8 +487,9 @@ Les quatre blocs sont décrits dans la section [Dénomination de la mémoire Mod
 
 - pymodbus compte les adresses à partir de 0. Certains outils affichent l'adresse 0 des HR sous la forme 40001 : il s'agit de la même donnée.
 - CO et DI se lisent bit par bit, HR et IR registre par registre. Dans les appareils décrits par ce projet, les quatre blocs sont séparés : une écriture de CO 0 ne modifie pas HR 0.
-- une valeur sur plusieurs registres (FLOAT32 sur 2 registres, INT64 sur 4) doit être lue et écrite en une seule requête, sinon la donnée est incohérente.
+- une valeur sur plusieurs registres (FLOAT32 sur 2 registres, INT64 sur 4, comme dans `temp_server.py`) doit être lue et écrite en une seule requête, sinon la donnée est incohérente.
 - le temps de cycle minimal d'une requête Modbus TCP est de l'ordre de la milliseconde : il est inutile d'interroger plusieurs fois par seconde un appareil qui varie lentement.
+- un entier codant une valeur × 10 (comme IR 0 dans `new_server.py`) occupe un seul registre : il suffit de lire `count=1` puis de diviser par 10 côté client.
 
 ## Commandes uv courantes
 
@@ -520,14 +538,14 @@ Documentation : [git-scm.com/doc](https://git-scm.com/doc).
 | Symptôme | Cause probable | Correction |
 |----------|----------------|------------|
 | Aucune sortie dans le terminal du serveur | comportement normal, `pymodbus` n'active aucun journal par défaut | vérifier la disponibilité du serveur avec un client, ou activer les journaux avec `pymodbus_apply_logging_config("INFO")` |
-| `Permission denied` au démarrage du serveur | le port 502 est réservé aux administrateurs sous Linux et macOS | utiliser `sudo uv run server.py` ou passer le port à 5020 |
+| `Permission denied` au démarrage du serveur | tentative d'utilisation du port 502, réservé aux administrateurs sous Linux et macOS | utiliser le port 5020 (déjà configuré dans les scripts fournis) |
 | `ConnectionException: Failed to connect` | le serveur n'est pas démarré, ou l'adresse / le port ne correspond pas | vérifier que le serveur écoute, et que l'adresse client correspond à l'écoute (`127.0.0.1` pour `0.0.0.0`) |
 | `ModbusIOException: No response received` | le client interroge une adresse inexistante, ou le type de requête ne correspond pas au bloc | contrôler l'adresse et le code fonction ; les adresses non déclarées lèvent `ILLEGAL_ADDRESS` |
 | Température qui ne varie pas | CO 0 n'a jamais été mis à 1 | exécuter `uv run new_client_on.py` |
-| Valeur de température incohérente | les deux registres du FLOAT32 n'ont pas été lus dans la même requête | lire `count=2` en une seule requête |
+| Valeur de température incohérente dans `new_server.py` | la valeur est lue comme un FLOAT32 alors qu'il s'agit d'un entier × 10 | lire `count=1` et diviser par 10 |
 | `TypeError` sur `SimDevice` | un des quatre blocs de `simdata` est vide | chaque bloc doit contenir au moins un `SimData` |
 | Environnement Python incohérent | dépendances désynchronisées | `uv sync` |
-| Le client répond avec des valeurs inattendues | un second serveur écoute déjà sur le port 502 | arrêter le processus serveur lancé précédemment (`Ctrl+C`) avant d'en démarrer un autre |
+| Le client répond avec des valeurs inattendues | un second serveur écoute déjà sur le port 5020 | arrêter le processus serveur lancé précédemment (`Ctrl+C`) avant d'en démarrer un autre |
 
 ## Références
 
