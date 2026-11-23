@@ -4,7 +4,7 @@ Carte mémoire (CO : Coils, DI : Discrete Inputs, HR : Holding Registers, IR : I
     CO 0        : chauffage (écrit par new_client_on.py / new_client_off.py)
     DI 0 / 1    : température > 25 °C / température < 15 °C
     HR 0        : registre de maintien inutilisé
-    IR 0        : température en °C × 10, REGISTERS (1 registre)
+    IR 0        : température en °C x 10, REGISTERS (1 registre)
 """
 
 import asyncio
